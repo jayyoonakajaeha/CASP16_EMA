@@ -3,162 +3,179 @@ import numpy as np
 import argparse
 import sys
 
-def calculate_z_scores_2pass(df, target_col, model_col, metric_col, direction='higher_is_better', threshold=2.0):
+def calculate_z_vector_2pass(values, direction='higher_is_better', threshold=2.0):
     """
-    Calculates Z-scores using the CASP16 2-Pass Outlier Removal algorithm.
+    Calculates Z-scores for a 1D vector using 2-Pass Outlier Removal.
     
-    1. Pass 1: Calculate Mean/Std. Filter out 'poor' models (> 2 STD worse than mean).
-       - If 'higher_is_better': Remove score < Mean - 2*Std
-       - If 'lower_is_better': Remove score > Mean + 2*Std
-    2. Pass 2: Recalculate Mean/Std from remaining models.
-    3. Calculate Z-scores for ALL models using standard parameters from Pass 2.
-    4. Clamp negative Z-scores to 0.0.
+    1. Pass 1: standard Z-score. Remove outliers > threshold (default 2.0).
+    2. Pass 2: Re-calculate Mean/Std on inliers.
+    3. Compute Z for ALL original values using Pass 2 stats.
+    4. Flip sign if 'lower_is_better' so that positive Z is good.
+    5. Clamp negative Z to 0.0.
     """
+    # Filter Nans
+    # In CASP16 extraction, we assume we have values.
+    # But input might have NaNs ? (e.g. from 80% rule failure -> but 80% rule fails the whole target)
+    # If values has NaN, we propagate NaN or 0? 
+    # Usually we ignore NaNs for Mean/Std calc.
     
-    # Ensure directional handling for Loss/RMSD
-    if direction == 'lower_is_better':
-        # Internal processing: Flip sign for standard processing logic?
-        # Or standard logic: Z = (Mean - Score) / Std  (so lower score gives positive Z)
-        # CASP method: Z = (d_i - Mean) / Std?? No.
-        # Let's stick to standard definition: Z = (x - mu) / sigma
-        # And if lower is better (e.g. RMSD), we want low RMSD to have High Z-score.
-        # So we invert the metric inputs just for calculation?
-        # CASP16 global_analysis code did: z_loss = (-1) * z_loss
-        # So we calculate standard Z-score first, then flip sign?
-        # Wait, for OUTLIER detection, we must be careful.
-        # Bad RMSD is High. So outlier is > Mean + 2*Std.
-        pass
+    valid_mask = ~np.isnan(values)
+    valid_vals = values[valid_mask]
+    
+    if len(valid_vals) < 2:
+        return np.zeros(len(values))
         
-    scores = df[metric_col].values
-    
-    # 1. First Pass Statistics
-    # Filter valid scores (remove NaNs)
-    valid_scores = scores[~np.isnan(scores)]
-    
-    if len(valid_scores) < 2:
-        return np.zeros(len(scores))
-        
-    mu1 = np.mean(valid_scores)
-    sigma1 = np.std(valid_scores, ddof=1)
+    # Pass 1
+    mu1 = np.mean(valid_vals)
+    sigma1 = np.std(valid_vals, ddof=1)
     
     if sigma1 == 0:
-        return np.zeros(len(scores))
-    
-    # Identify outliers (Models that are too bad)
-    if direction == 'higher_is_better':
-        # Bad = Low. Outlier < Mean - 2*Std
-        cutoff = mu1 - (threshold * sigma1)
-        mask_keep = valid_scores >= cutoff
-    else: # lower_is_better (e.g. RMSD)
-        # Bad = High. Outlier > Mean + 2*Std
-        cutoff = mu1 + (threshold * sigma1)
-        mask_keep = valid_scores <= cutoff
+        return np.zeros(len(values))
         
-    filtered_scores = valid_scores[mask_keep]
+    if direction == 'higher_is_better':
+        # Bad is Low. Outlier < Mean - k*Std
+        cutoff = mu1 - (threshold * sigma1)
+        inlier_mask = valid_vals >= cutoff
+    else: # lower_is_better (e.g. Loss)
+        # Bad is High. Outlier > Mean + k*Std
+        cutoff = mu1 + (threshold * sigma1)
+        inlier_mask = valid_vals <= cutoff
+        
+    inliers = valid_vals[inlier_mask]
     
-    # 2. Second Pass Statistics
-    if len(filtered_scores) < 2:
-        # If filtering removes almost everything, fall back to Pass 1 stats OR return 0?
-        # CASP usually keeps Pass 1 if too few models remain, but let's assume robust.
-        mu2 = np.mean(filtered_scores)
-        sigma2 = np.std(filtered_scores, ddof=1)
+    # Pass 2
+    if len(inliers) < 2:
+        # Fallback to Pass 1 if too aggressive
+        mu2, sigma2 = mu1, sigma1
     else:
-        mu2 = np.mean(filtered_scores)
-        sigma2 = np.std(filtered_scores, ddof=1)
+        mu2 = np.mean(inliers)
+        sigma2 = np.std(inliers, ddof=1)
         
     if sigma2 == 0:
-        sigma2 = sigma1 # Fallback
-        if sigma2 == 0: return np.zeros(len(scores))
-
-    # 3. Calculate Z-scores
-    # Z = (x - mu) / sigma
-    z_scores = (scores - mu2) / sigma2
+        sigma2 = sigma1
+        if sigma2 == 0: return np.zeros(len(values))
+        
+    # Final Z-score for ALL values
+    z_scores = (values - mu2) / sigma2
     
-    # If lower_is_better, flip sign so that Lower Score (Better) -> Higher Z
+    # Directionality Flip
     if direction == 'lower_is_better':
         z_scores = z_scores * -1.0
         
-    # 4. Clamping
-    # Provide 0.0 for models that are worse than the reference mean (negative Z)
-    z_scores = np.where(z_scores < 0, 0.0, z_scores)
-    
-    # Handle NaNs (missing predictions get 0.0 penalty implicitly by FillNM or explicit handling)
-    # The input DF might have NaNs.
+    # Clamp Negative Z to 0
+    # Note: NaNs in z_scores (from NaNs in values) remain NaNs or become 0?
+    # CASP: "Missing" -> 0.0 penalty.
     z_scores = np.nan_to_num(z_scores, nan=0.0)
+    z_scores = np.where(z_scores < 0, 0.0, z_scores)
     
     return z_scores
 
-def main():
-    parser = argparse.ArgumentParser(description="CASP16 Z-Score Evaluation (2-Pass Algorithm)")
-    parser.add_argument("--input", required=True, help="Input CSV file with Target, Model, and Metric columns")
-    parser.add_argument("--output", required=True, help="Output CSV file for Leaderboard")
-    parser.add_argument("--metrics", required=True, nargs='+', help="List of metrics to evaluate (e.g. tm_score lddt)")
-    parser.add_argument("--directions", required=True, nargs='+', help="Directions for metrics (higher_is_better or lower_is_better). Must match order of metrics.")
-    parser.add_argument("--threshold", type=float, default=2.0, help="Z-score threshold for outlier removal (Default: 2.0)")
+def process_metric_group(df, group_name, metrics, use_loss=True, threshold=2.0):
+    """
+    Processes a group of metrics (e.g. SCORE = [tm_score])
+    Returns a Series of summed RS scores per Model.
+    """
+    # Filter for relevant metrics
+    group_df = df[df['Metric_Type'].isin(metrics)].copy()
     
+    if group_df.empty:
+        print(f"Warning: No data found for metrics {metrics} in group {group_name}")
+        return None
+
+    # We need to calculate RS per Target per Metric
+    # RS = 0.5*Z(P) + 0.5*Z(S) + Z(A) + Z(L)
+    
+    # Unique Targets
+    targets = group_df['Target'].unique()
+    
+    # We will accumulate RS per Model
+    model_rs_sum = {}
+    
+    print(f"--- Processing {group_name} ({len(metrics)} metrics) ---")
+    
+    for metric in metrics:
+        subset = group_df[group_df['Metric_Type'] == metric].copy()
+        if subset.empty: continue
+        
+        # We process separately per target
+        for target in subset['Target'].unique():
+            t_df = subset[subset['Target'] == target].copy()
+            
+            # Calculate Z-scores for each component
+            # Pearson: Higher is Better
+            zp = calculate_z_vector_2pass(t_df['Pearson'].values, 'higher_is_better', threshold)
+            
+            # Spearman: Higher is Better
+            zs = calculate_z_vector_2pass(t_df['Spearman'].values, 'higher_is_better', threshold)
+            
+            # AUROC: Higher is Better
+            # (Note: grade_predictions handles direction logic for AUC input)
+            za = calculate_z_vector_2pass(t_df['AUROC'].values, 'higher_is_better', threshold)
+            
+            # Loss: Lower is Better
+            # grade_predictions outputs Loss > 0 (Min difference). Lower is better.
+            zl = calculate_z_vector_2pass(t_df['Loss'].values, 'lower_is_better', threshold)
+            
+            # Formula
+            if use_loss:
+                rs_values = (0.5 * zp) + (0.5 * zs) + za + zl
+            else:
+                rs_values = (0.5 * zp) + (0.5 * zs) + za
+                
+            # Add to accumulators
+            models = t_df['Model'].values
+            for m, rs in zip(models, rs_values):
+                model_rs_sum[m] = model_rs_sum.get(m, 0.0) + rs
+                
+    # Convert to DataFrame
+    res = pd.DataFrame(list(model_rs_sum.items()), columns=['Model', f'RS_{group_name}'])
+    res = res.sort_values(by=f'RS_{group_name}', ascending=False)
+    
+    # Add Rank
+    res['Rank'] = range(1, len(res) + 1)
+    return res
+
+def main():
+    parser = argparse.ArgumentParser(description="Calculate CASP16 Ranking Scores (RS) from Graded Metrics")
+    parser.add_argument("--input", required=True, help="Input CSV (Output of grade_predictions.py)")
+    parser.add_argument("--output_dir", required=True, help="Directory to save leaderboards")
+    
+    # Metric Groups
+    parser.add_argument("--tm_metric", nargs='+', default=[], help="Metrics for SCORE (e.g. tm_score)")
+    parser.add_argument("--qs_metric", nargs='+', default=[], help="Metrics for QSCORE (e.g. qs_best dockq_wave)")
+    parser.add_argument("--local_metric", nargs='+', default=[], help="Metrics for Local Quality (Loss excluded)")
+    parser.add_argument("--threshold", type=float, default=2.0, help="Z-score outlier threshold (Default: 2.0)")
+
     args = parser.parse_args()
     
-    if len(args.metrics) != len(args.directions):
-        print("Error: Number of metrics and directions must match.")
-        sys.exit(1)
-        
-    print(f"Loading data from {args.input}...")
     df = pd.read_csv(args.input)
     
-    # Ensure required columns
-    required_cols = ['Target', 'Model'] + args.metrics
-    for col in required_cols:
-        if col not in df.columns:
-            print(f"Error: Column '{col}' missing from input CSV.")
-            sys.exit(1)
+    # Process SCORE (Global Topology)
+    if args.tm_metric:
+        print("Calculating SCORE (Global Topology)...")
+        score_df = process_metric_group(df, "SCORE", args.tm_metric, use_loss=True, threshold=args.threshold)
+        if score_df is not None:
+            path = f"{args.output_dir}/leaderboard_SCORE.csv"
+            score_df.to_csv(path, index=False)
+            print(f"Saved {path}")
             
-    # Process each metric
-    ranking_dfs = []
-    
-    unique_targets = df['Target'].unique()
-    print(f"Found {len(unique_targets)} targets.")
-    
-    grand_sums = {} # Model -> Total Z-Score Sum across all metrics?
-    # Usually we evaluate each metric separately first.
-    
-    overall_results = []
-    
-    for metric, direction in zip(args.metrics, args.directions):
-        print(f"Processing {metric} ({direction})...")
-        
-        # We need to calculate Z-scores PER TARGET
-        # Add a temporary Z column
-        z_col_name = f"Z_{metric}"
-        df[z_col_name] = 0.0
-        
-        for target in unique_targets:
-            # Slice for this target
-            t_mask = df['Target'] == target
-            t_df = df[t_mask].copy()
+    # Process QSCORE (Interface Accuracy)
+    if args.qs_metric:
+        print("Calculating QSCORE (Interface Accuracy)...")
+        qs_df = process_metric_group(df, "QSCORE", args.qs_metric, use_loss=True, threshold=args.threshold)
+        if qs_df is not None:
+            path = f"{args.output_dir}/leaderboard_QSCORE.csv"
+            qs_df.to_csv(path, index=False)
+            print(f"Saved {path}")
             
-            # Identify Model column and Metric values
-            # Handle duplicates? Assume unique Model per Target
-            
-            z_vals = calculate_z_scores_2pass(t_df, 'Target', 'Model', metric, direction, args.threshold)
-            
-            # Assign back
-            df.loc[t_mask, z_col_name] = z_vals
-            
-        # Sum Z-scores per Model (Ranking Score for this metric)
-        leaderboard = df.groupby('Model')[z_col_name].sum().reset_index()
-        leaderboard.columns = ['Model', 'Summed_Z_Score']
-        leaderboard = leaderboard.sort_values(by='Summed_Z_Score', ascending=False)
-        leaderboard['Rank'] = range(1, len(leaderboard) + 1)
-        leaderboard['Metric'] = metric
-        
-        overall_results.append(leaderboard)
-        
-        # Save individual metric leaderboard
-        leaderboard.to_csv(f"{args.output}_{metric}.csv", index=False)
-        print(f"Saved leaderboard for {metric} to {args.output}_{metric}.csv")
+    # Process Local Quality (No Loss)
+    if args.local_metric:
+        print("Calculating Local Quality (No Loss)...")
+        local_df = process_metric_group(df, "Local", args.local_metric, use_loss=False, threshold=args.threshold)
+        if local_df is not None:
+            path = f"{args.output_dir}/leaderboard_Local.csv"
+            local_df.to_csv(path, index=False)
+            print(f"Saved {path}")
 
-    # Combine all results if needed?
-    # For now, separate metric leaderboards are standard.
-    
 if __name__ == "__main__":
     main()

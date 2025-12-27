@@ -1,97 +1,115 @@
-# CASP16 EMA 모델 평가 패키지 (Z-Score 2단계 알고리즘)
+# CASP16 EMA 평가 패키지 (Evaluation Package)
 
-이 패키지는 **CASP16의 Z-Score 평가 방법론**을 사용하여 단백질 구조 모델(EMA)을 평가하기 위한 독립적인 도구 모음입니다.
+이 패키지는 CASP16 공식 문서 및 방법론에 기반하여 단백질 구조 예측 모델의 품질(QA)을 평가하고 랭킹을 산출하는 도구 모음입니다.
 
-## 주요 기능
+## 📌 주요 기능
 
-1.  **CASP16 방법론 정밀 구현**:
-    *   **2단계 아웃라이어 제거 (2-Pass Outlier Removal)**: 평균에서 2 표준편차 이상 벗어난 '나쁜' 모델을 제거한 후 통계를 다시 계산하여 Z-Score를 산출합니다.
-    *   **타겟별 합산 (Target-wise Summation)**: 각 타겟별로 Z-Score를 계산한 뒤, 이를 모두 합산하여 최종 순위를 결정합니다.
-    *   **음수 클램핑 (Negative Clamping)**: 평균보다 낮은 성능(음수 Z-Score)은 0.0점으로 처리하여 과도한 페널티를 방지합니다.
-    *   **방향성 처리 (Directionality Handling)**: '낮을수록 좋은' 지표(예: Loss, RMSD)에 대해서는 Z-Score 방향을 자동으로 보정합니다.
+1.  **2-Pass Outlier Removal Z-Score**: 이상치에 강건한 Z-score 산출 알고리즘 적용 (Outlier 제거 후 평균/표준편차 재계산).
+2.  **CASP16 Ranking Score (RS)**: `0.5 * Z(Pearson) + 0.5 * Z(Spearman) + Z(AUROC) + Z(Loss)` 공식을 통한 종합 점수 계산.
+3.  **Strict Filtering**: 
+    *   **Low Quality Target 제외**: 최고 성능 모델의 TM-score가 0.6 미만인 타겟은 변별력 부족으로 평가에서 제외.
+    *   **Data Coverage Rule**: 타겟별 예측 제출율이 80% 미만인 모델은 해당 타겟 점수 0점 처리.
+4.  **Robust Metrics**:
+    *   **Loss**: Best Possible Score와의 차이 (Lower is Better).
+    *   **AUROC**: 타겟 내 **상위 25% (75th percentile)** 모델을 'Good'으로 정의하여 변별력 측정 (상대평가).
 
-## 디렉토리 구조
+## 📂 패키지 구조
 
 ```
 CASP16_Evaluation_Pkg/
-├── calculate_casp16_zscores.py  # 메인 Z-Score 계산 스크립트
-├── merge_predictions.py         # 개별 CSV 파일 병합 도구
-├── requirements.txt             # Python 의존성 목록
-└── README.md                    # 설명서 (본 파일)
+├── grade_casp16_predictions.py  # [Step 1] 원본 예측 데이터를 정답과 비교하여 4가지 지표(P, S, L, A) 산출
+├── calculate_casp16_zscores.py  # [Step 2] 산출된 지표를 바탕으로 Z-Score 및 최종 RS 랭킹 계산
+├── merge_predictions.py         # (선택) 여러 예측 파일 합치기 도구
+├── targetlist.csv               # CASP16 타겟 리스트 (참고용)
+└── requirements.txt             # 필요 라이브러리 목록
 ```
 
-## 설치 방법
+## 🚀 사용 방법 (Quick Start)
 
-1.  Python 3를 설치합니다.
-2.  의존성 라이브러리를 설치합니다:
-    ```bash
-    pip install -r requirements.txt
-    ```
+### 1. 환경 설정
 
-## 사용 방법
-
-### 단계 0: 원본 데이터 채점 (옵션 - 80% 규칙 적용)
-
-만약 예측한 Raw Score (모델별 점수) 파일들을 가지고 있다면, 이 단계부터 시작하세요.
-이 스크립트는 CASP16의 엄격한 **'80% 데이터 충족 요건'**을 검사하고, 통과한 타겟에 대해서만 지표(Pearson, Loss 등)를 계산합니다.
+Python 3.8 이상 환경에서 필요한 라이브러리를 설치합니다.
 
 ```bash
-python grade_predictions.py \
-  --pred_dir /path/to/raw_predictions \
-  --score_dir /path/to/ground_truth \
+pip install -r requirements.txt
+```
+
+### 2. 데이터 준비
+
+*   **Prediction Files**: 타겟별 예측 점수가 담긴 CSV 파일들 (예: `T1104.csv`, `H1202.csv`). 각 파일은 EMA 모델들을 컬럼으로 가져야 합니다.
+*   **Quality Score Files**: 실제 정답 품질 점수(GDT-TS, TM-score 등)가 담긴 CSV 파일들 (예: `T1104_quality_scores.csv`).
+
+### 3. [Step 1] 1차 채점 (Grading)
+
+각 예측 모델의 성능 지표(Pearson, Spearman, Loss, AUROC)를 계산합니다. 이 단계에서 **타겟 필터링(TM-score < 0.6 제외)**과 **AUROC 기준 설정(Top 25%)**이 적용됩니다.
+
+```bash
+python grade_casp16_predictions.py \
+  --pred_dir ./data/Predictions \
+  --score_dir ./data/Quality_Scores \
   --output graded_metrics.csv \
-  --metric_pairs RF_tmscore:tm_score Stacking_lddt:lddt \
-  --directions higher_is_better higher_is_better
+  --truth_metric tmscore_mmalign
 ```
-*   `--metric_pairs`: 예측 컬럼과 정답 컬럼을 `PredictorCol:TruthCol` 형태로 매핑합니다.
-*   **80% 규칙**: 타겟 내 모델의 80% 이상을 예측하지 못한 경우, 해당 타겟의 모든 지표는 `NaN` 처리되어 이후 0점(Z-Score)이 됩니다.
 
-### 단계 1: 예측 데이터 준비 (이미 채점된 경우)
+*   `--pred_dir`: 예측 파일들이 있는 디렉토리 (패키지 내 `data/Predictions`에 예제 데이터 포함됨)
+*   `--score_dir`: 정답 파일들이 있는 디렉토리 (패키지 내 `data/Quality_Scores`에 예제 데이터 포함됨)
+*   `--output`: 결과가 저장될 CSV 경로
+*   `--truth_metric`: (선택) 정답으로 사용할 CSV 컬럼명. 기본값은 `tmscore_mmalign`입니다. `tmscore_usalign`, `lddt` 등으로 변경하여 다른 지표 기준으로 평가할 수 있습니다.
 
-만약 이미 채점된 메트릭(Pearson 등) 파일이 있다면 이 단계로 건너뛰세요.
-모든 타겟과 모델의 예측 결과가 포함된 하나의 통합 CSV 파일이 필요합니다.
+### (옵션) 나만의 모델 추가하여 랭킹 비교하기
 
-CSV 파일은 반드시 다음 컬럼들을 포함해야 합니다:
-*   `Target`: 타겟 ID (예: T1104, T1106s1)
-*   `Model`: 모델명 (예: MULTICOM, AlphaFold2)
-*   `Metric1`, `Metric2`, ...: 수치형 점수 (예: tm_score, lddt, dockq, rmsd)
+자신이 개발한 모델의 성능을 CASP16 리더보드에 포함시켜 비교할 수 있습니다.
 
-만약 예측 결과가 타겟별로 개별 CSV 파일(예: 폴더 내 `T1104.csv`)에 흩어져 있다면, 아래의 병합 스크립트를 사용하세요:
+1.  **예측 파일 준비**: 다음과 같은 형식의 CSV 파일을 준비합니다 (예: `my_predictions.csv`).
+    *   필수 컬럼: `Target`, `Model` (Decoy ID), `Score`
+    ```csv
+    Target,Model,Score
+    H1202,H1202TS014_1,0.85
+    H1202,H1202TS014_2,0.82
+    T1206,T1206TS475_1,0.77
+    ...
+    ```
+    (주의: `Model` ID는 `Predictions` 디렉토리 내의 파일들에 있는 ID 형식과 일치해야 매칭됩니다.)
+
+2.  **실행**: `--user_csv`와 `--user_name` 옵션을 추가하여 실행합니다.
 
 ```bash
-python merge_predictions.py \
-  --pred_dir /path/to/predictions_directory \
-  --output merged_predictions.csv
+python grade_casp16_predictions.py \
+  ... (기존 옵션) \
+  --user_csv my_predictions.csv \
+  --user_name "My_Awesome_Model"
 ```
 
-### 단계 2: Z-Score 평가 실행
+이렇게 하면 `graded_metrics.csv`에 "My_Awesome_Model"의 성적표가 포함되며, 이후 `calculate_casp16_zscores.py`를 실행할 때 자동으로 리더보드에 랭킹이 산출됩니다.
 
-평가 스크립트를 실행할 때 입력 파일, 평가할 지표 목록, 그리고 각 지표의 방향성을 지정해야 합니다.
+### 4. [Step 2] 2차 랭킹 산출 (Ranking)
 
-**사용 예시:**
+1차 채점 결과를 바탕으로 2-Pass Z-score를 계산하고 최종 순위를 매깁니다.
+
+> **주의**: `calculate_casp16_zscores.py` 실행 전, `graded_metrics.csv` 파일에 **`Metric_Type`** 컬럼을 추가해야 할 수 있습니다 (예: 값을 'tm_score'로 통일).
+
 ```bash
 python calculate_casp16_zscores.py \
-  --input merged_predictions.csv \
-  --output leaderboard \
-  --metrics tm_score lddt dockq rmsd \
-  --directions higher_is_better higher_is_better higher_is_better lower_is_better \
-  --threshold 2.0
+  --input graded_metrics_ready.csv \
+  --output_dir ./results \
+  --tm_metric tm_score
 ```
 
-*   `--input`: 1단계에서 준비한 병합된 CSV 파일 경로.
-*   `--metrics`: 평가할 지표(컬럼명)들을 공백으로 구분하여 입력.
-*   `--directions`: 각 지표에 해당하는 방향성 (`higher_is_better` 또는 `lower_is_better`)을 순서대로 입력.
-*   `--threshold`: 아웃라이어 제거를 위한 Z-Score 임계값 (기본값: 2.0).
+*   `--tm_metric`: 평가에 사용할 메트릭 그룹 (보통 `tm_score` 또는 `gdtts`. 데이터에 맞게 지정).
+*   이 옵션을 사용하면 `SCORE` (Global Quality) 리더보드가 생성됩니다.
 
-### 출력 결과
+## 📊 결과 해석
 
-스크립트 실행 후 다음과 같은 파일들이 생성됩니다:
-1.  **지표별 리더보드 CSV** (예: `leaderboard_tm_score.csv`, `leaderboard_rmsd.csv`).
-2.  각 리더보드 파일의 구성:
-    *   `Model`: 모델명
-    *   `Summed_Z_Score`: 최종 합산 점수 (높을수록 좋음)
-    *   `Rank`: 순위 (1위부터 시작)
+생성된 `leaderboard_SCORE.csv` 파일 예시:
 
-## 라이선스
+| Model | RS_SCORE | Rank |
+| :--- | :--- | :--- |
+| Model_A | 55.2 | 1 |
+| Model_B | 48.1 | 2 |
+| ... | ... | ... |
 
-MIT License.
+*   **RS_SCORE**: 각 타겟별 Z-score의 총합. 높을수록 좋습니다.
+*   점수가 0.0인 경우: 예측을 제출하지 않았거나, 모든 타겟에서 이상치(Outlier)로 분류되어 제거되었거나, 타겟 필터링에 의해 유효한 평가 타겟이 없는 경우일 수 있습니다.
+
+---
+**Last Updated**: 2025-12-27
