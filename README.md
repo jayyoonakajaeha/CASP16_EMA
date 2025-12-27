@@ -86,16 +86,15 @@ python grade_casp16_predictions.py \
 
 1차 채점 결과를 바탕으로 2-Pass Z-score를 계산하고 최종 순위를 매깁니다.
 
-> **주의**: `calculate_casp16_zscores.py` 실행 전, `graded_metrics.csv` 파일에 **`Metric_Type`** 컬럼을 추가해야 할 수 있습니다 (예: 값을 'tm_score'로 통일).
-
 ```bash
 python calculate_casp16_zscores.py \
-  --input graded_metrics_ready.csv \
+  --input graded_metrics.csv \
   --output_dir ./results \
-  --tm_metric tm_score
+  --tm_metric tmscore_mmalign
 ```
 
-*   `--tm_metric`: 평가에 사용할 메트릭 그룹 (보통 `tm_score` 또는 `gdtts`. 데이터에 맞게 지정).
+*   `--input`: 1차 채점 단계에서 생성된 CSV 파일.
+*   `--tm_metric`: 평가에 사용할 메트릭 그룹. `grade_casp16_predictions.py`에서 `--truth_metric`으로 지정한 값(기본 `tmscore_mmalign`)과 일치해야 합니다.
 *   이 옵션을 사용하면 `SCORE` (Global Quality) 리더보드가 생성됩니다.
 
 ## 📊 결과 해석

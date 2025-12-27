@@ -186,7 +186,7 @@ def main():
                 metrics = calculate_metrics(merged, pred, args.truth_metric)
                 # metrics dict: Pearson, Spearman, Loss, AUROC
                 
-                res = {'Target': target, 'Model': pred}
+                res = {'Target': target, 'Model': pred, 'Metric_Type': args.truth_metric}
                 res.update(metrics)
                 all_results.append(res)
                 
