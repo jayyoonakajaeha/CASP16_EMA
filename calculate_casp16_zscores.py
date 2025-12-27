@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import argparse
 import sys
+import os
 
 def calculate_z_vector_2pass(values, direction='higher_is_better', threshold=2.0):
     """
@@ -149,7 +150,8 @@ def main():
     args = parser.parse_args()
     
     df = pd.read_csv(args.input)
-    
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
     # Process SCORE (Global Topology)
     if args.tm_metric:
         print("Calculating SCORE (Global Topology)...")
