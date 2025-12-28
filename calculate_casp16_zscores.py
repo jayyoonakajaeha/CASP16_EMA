@@ -142,8 +142,8 @@ def main():
     parser.add_argument("--output_dir", required=True, help="Directory to save leaderboards")
     
     # Metric Groups
-    parser.add_argument("--tm_metric", nargs='+', default=[], help="Metrics for SCORE (e.g. tm_score)")
-    parser.add_argument("--qs_metric", nargs='+', default=[], help="Metrics for QSCORE (e.g. qs_best dockq_wave)")
+    parser.add_argument("--score_metric", nargs='+', default=[], help="Metrics for SCORE (e.g. tm_score)")
+    parser.add_argument("--qscore_metric", nargs='+', default=[], help="Metrics for QSCORE (e.g. qs_best dockq_wave)")
     parser.add_argument("--local_metric", nargs='+', default=[], help="Metrics for Local Quality (Loss excluded)")
     parser.add_argument("--threshold", type=float, default=2.0, help="Z-score outlier threshold (Default: 2.0)")
 
@@ -153,18 +153,20 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
     # Process SCORE (Global Topology)
-    if args.tm_metric:
+    # Process SCORE (Global Topology)
+    if args.score_metric:
         print("Calculating SCORE (Global Topology)...")
-        score_df = process_metric_group(df, "SCORE", args.tm_metric, use_loss=True, threshold=args.threshold)
+        score_df = process_metric_group(df, "SCORE", args.score_metric, use_loss=True, threshold=args.threshold)
         if score_df is not None:
             path = f"{args.output_dir}/leaderboard_SCORE.csv"
             score_df.to_csv(path, index=False)
             print(f"Saved {path}")
             
     # Process QSCORE (Interface Accuracy)
-    if args.qs_metric:
+    # Process QSCORE (Interface Accuracy)
+    if args.qscore_metric:
         print("Calculating QSCORE (Interface Accuracy)...")
-        qs_df = process_metric_group(df, "QSCORE", args.qs_metric, use_loss=True, threshold=args.threshold)
+        qs_df = process_metric_group(df, "QSCORE", args.qscore_metric, use_loss=True, threshold=args.threshold)
         if qs_df is not None:
             path = f"{args.output_dir}/leaderboard_QSCORE.csv"
             qs_df.to_csv(path, index=False)

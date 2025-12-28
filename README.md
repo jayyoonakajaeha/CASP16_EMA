@@ -90,12 +90,13 @@ python grade_casp16_predictions.py \
 python calculate_casp16_zscores.py \
   --input graded_metrics.csv \
   --output_dir ./results \
-  --tm_metric tmscore_mmalign
+  --score_metric tmscore_mmalign
 ```
 
 *   `--input`: 1차 채점 단계에서 생성된 CSV 파일.
-*   `--tm_metric`: 평가에 사용할 메트릭 그룹. `grade_casp16_predictions.py`에서 `--truth_metric`으로 지정한 값(기본 `tmscore_mmalign`)과 일치해야 합니다.
-*   이 옵션을 사용하면 `SCORE` (Global Quality) 리더보드가 생성됩니다.
+*   `--score_metric`: `SCORE` (Global Topology) 랭킹 산출에 사용할 메트릭의 이름. (예: `tmscore_mmalign`). `grade_casp16_predictions.py`에서 `--truth_metric`으로 지정했던 값과 동일해야 합니다.
+*   `--qscore_metric`: (선택) `QSCORE` (Quaternary Structure) 랭킹 산출 시 사용할 메트릭 이름.
+*   이 옵션들을 통해 어떤 지표를 기준으로 해당 카테고리(SCORE/QSCORE) 점수를 매길지 결정합니다.
 
 ## 📊 결과 해석
 
